@@ -1,0 +1,173 @@
+// ============================================================
+// foroEmpresa.js — Vista de Foro para usuarios tipo Empresa
+// Carga publicaciones REALES desde GET /api/foro
+// Permite crear nuevas publicaciones como empresa
+//
+// Campos mapeados: id, titulo, contenido, cantidadLikes, creadoEl,
+//                  autorNombre, autorApellido, totalComentarios
+// ============================================================
+const API = 'http://localhost:3000/api';
+let todasPublicaciones = [];
+ 
+document.addEventListener('DOMContentLoaded', async () => {
+    const user = JSON.parse(localStorage.getItem('user') || 'null');
+    if (!user) { window.location.href = '/VISTA_01_Login.html'; return; }
+ 
+    await cargarForo();
+ 
+    // Buscador
+    const si = document.querySelector('input[placeholder*="Buscar"], input[placeholder*="buscar"]');
+    si?.addEventListener('input', debounce(() => {
+        const q = si.value.toLowerCase().trim();
+        renderForo(q
+            ? todasPublicaciones.filter(p =>
+                p.titulo.toLowerCase().includes(q) || (p.contenido || '').toLowerCase().includes(q))
+            : todasPublicaciones
+        );
+    }, 300));
+ 
+    // Botón nueva publicación
+    document.getElementById('btn-nueva-publicacion')?.addEventListener('click', () => {
+        abrirModalNuevaPublicacion(user);
+    });
+ 
+    // Formulario de nueva publicación (si existe modal en el HTML)
+    document.getElementById('form-nueva-publicacion')?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const titulo   = document.getElementById('pub-titulo')?.value?.trim();
+        const contenido = document.getElementById('pub-contenido')?.value?.trim();
+        await publicar(user, titulo, contenido);
+    });
+});
+ 
+async function cargarForo() {
+    const container = document.getElementById('foro-container');
+    if (!container) return;
+ 
+    // Limpiar datos estáticos/fantasma
+    container.innerHTML = `
+        <div class="text-center py-5 text-muted">
+            <span class="spinner-border spinner-border-sm me-2"></span>Cargando foro...
+        </div>`;
+ 
+    try {
+        const res  = await fetch(`${API}/foro`, { credentials: 'include' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+ 
+        const data = await res.json();
+        todasPublicaciones = Array.isArray(data.data) ? data.data : [];
+ 
+        if (todasPublicaciones.length === 0) {
+            container.innerHTML = `
+                <div class="text-center py-5 text-muted">
+                    <i class="bi bi-chat-dots fs-1 d-block mb-3 opacity-40"></i>
+                    <p>Aún no hay publicaciones en el foro.</p>
+                </div>`;
+            return;
+        }
+ 
+        renderForo(todasPublicaciones);
+ 
+    } catch (err) {
+        console.error('[foroEmpresa] cargarForo:', err);
+        container.innerHTML = `
+            <div class="alert alert-danger m-3">
+                <i class="bi bi-wifi-off me-2"></i>
+                Error al cargar el foro. Verifica tu conexión.
+            </div>`;
+    }
+}
+ 
+function renderForo(pubs) {
+    const container = document.getElementById('foro-container');
+    if (!container) return;
+ 
+    container.innerHTML = '';
+ 
+    if (pubs.length === 0) {
+        container.innerHTML = '<div class="text-center py-4 text-muted">No hay publicaciones que coincidan.</div>';
+        return;
+    }
+ 
+    const colores = ['#2563eb', '#7c3aed', '#059669', '#d97706', '#dc2626', '#0891b2'];
+ 
+    container.innerHTML = pubs.map(p => {
+        const ini   = ((p.autorNombre || '?').charAt(0) + (p.autorApellido || '').charAt(0)).toUpperCase();
+        const color = colores[Math.abs(ini.charCodeAt(0) + (ini.charCodeAt(1) || 0)) % colores.length];
+        const dias  = Math.floor((Date.now() - new Date(p.creadoEl)) / 86400000);
+        const tiempoStr = dias === 0 ? 'Hoy' : dias === 1 ? 'Ayer' : `Hace ${dias} días`;
+        const resumen   = (p.contenido || '').substring(0, 220).trim();
+ 
+        return `
+<div class="card border-0 shadow-sm mb-3" style="border-radius:12px;">
+    <div class="card-body p-4">
+        <div class="d-flex gap-3 align-items-start">
+            <div class="fw-bold text-white d-flex align-items-center justify-content-center rounded-circle flex-shrink-0"
+                 style="width:44px;height:44px;background:${color};font-size:.9rem;">
+                ${ini}
+            </div>
+            <div class="flex-grow-1 min-width-0">
+                <div class="d-flex align-items-center gap-2 flex-wrap mb-1">
+                    <span class="fw-semibold">${esc(p.autorNombre)} ${esc(p.autorApellido)}</span>
+                    <span class="text-muted small">· ${tiempoStr}</span>
+                </div>
+                <h6 class="fw-bold mb-2">
+                    <a href="/VISTA_21_DetallesForo_Postulante.html?id=${p.id}"
+                       class="text-decoration-none" style="color:inherit;">
+                        ${esc(p.titulo)}
+                    </a>
+                </h6>
+                <p class="text-muted small mb-3 lh-base">
+                    ${esc(resumen)}${(p.contenido || '').length > 220 ? '...' : ''}
+                </p>
+                <div class="d-flex align-items-center gap-3 text-muted small flex-wrap">
+                    <span><i class="bi bi-chat me-1"></i>${p.totalComentarios || 0} respuestas</span>
+                    <span><i class="bi bi-heart me-1"></i>${p.cantidadLikes || 0} me gusta</span>
+                    <a href="/VISTA_21_DetallesForo_Postulante.html?id=${p.id}"
+                       class="btn btn-outline-primary btn-sm ms-auto">
+                        Ver hilo <i class="bi bi-arrow-right ms-1"></i>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>`;
+    }).join('');
+}
+ 
+async function abrirModalNuevaPublicacion(user) {
+    const titulo    = prompt('Título de tu publicación:');
+    const contenido = prompt('Contenido / descripción:');
+    if (!titulo?.trim() || !contenido?.trim()) return;
+    await publicar(user, titulo.trim(), contenido.trim());
+}
+ 
+async function publicar(user, titulo, contenido) {
+    if (!titulo || !contenido) return;
+    try {
+        const r = await fetch(`${API}/foro`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ idUsuario: user.id, titulo, contenido })
+        });
+        if (r.ok) {
+            await cargarForo();
+        } else {
+            alert('Error al publicar. Intenta de nuevo.');
+        }
+    } catch (err) {
+        console.error('[foroEmpresa] publicar:', err);
+        alert('Error de conexión.');
+    }
+}
+ 
+function esc(s) {
+    return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+ 
+function debounce(fn, ms) {
+    let t;
+    return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
+}
+ 
